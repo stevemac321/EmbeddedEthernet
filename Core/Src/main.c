@@ -30,10 +30,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define TOTAL_FLOATS 32
-#define TX_BUFFER_SIZE (TOTAL_FLOATS * sizeof(float))
+#define TOTAL_FLOATS 128
+#define TX_BUFFER_SIZE 512
 uint8_t TxDataBuffer[TX_BUFFER_SIZE];
 float adc_buffer[TOTAL_FLOATS];
+//#define GET_TRAINING_DATA
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -70,10 +71,9 @@ ETH_HandleTypeDef heth;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-
 void TransmitPacket(ETH_HandleTypeDef *heth);
 void ReadChunk(ETH_HandleTypeDef *heth, uint8_t *RxDataBuffer);
-
+void TransmitRawVoltage();
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -125,50 +125,10 @@ int main(void)
   MX_USB_OTG_HS_USB_Init();
   MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
-  if (HAL_ETH_Start(&heth) != HAL_OK)
- 	  {
- 	      printf("Failed to start Ethernet\r\n");
- 	      Error_Handler();
- 	  } else {
- 		  printf("Ethernet started\r\n");
- 	  }
 
-  uint8_t *RxDataBuffer = NULL;
-  if (HAL_ETH_ReadData(&heth, (void*)&RxDataBuffer)) {
+  for(int i=0; i < 100; i++)
+	  TransmitRawVoltage();
 
-	  ReadChunk(&heth, RxDataBuffer);
-  }
-
-
-
-  for (int i = 0; i < TOTAL_FLOATS; i++) {
-	HAL_ADC_Start(&hadc3);
-	if (HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY) == HAL_OK) {
-		adc_buffer[i] = HAL_ADC_GetValue(&hadc3);
-		printf("%f ", adc_buffer[i]);
-	}
-	HAL_ADC_Stop(&hadc3);
-  }
-  printf("\n\r the end of floats, now TxDataBuffer");
-
-  const float *src_ptr = adc_buffer; // Pointer to the source float array
-  uint8_t *dest_ptr = TxDataBuffer;
-
-  // Convert floats in adc_buffer to bytes and store in TxDataBuffer
-  for (int i = 0; i < TOTAL_FLOATS; i++) {
-      // Each float (4 bytes) is copied to the appropriate position in TxDataBuffer
-	  memcpy(dest_ptr, src_ptr, sizeof(float));
-	  // Move the pointers to the next position
-	  src_ptr++;
-	  dest_ptr += sizeof(float);
-  }
-  for (int i = 0; i < TOTAL_FLOATS; i += 4) {
-      printf("TxDataBuffer [%d - %d]: %02x %02x %02x %02x\r\n", i, i+3,
-             TxDataBuffer[i], TxDataBuffer[i+1], TxDataBuffer[i+2], TxDataBuffer[i+3]);
-  }
-  TransmitPacket(&heth);
-
-  HAL_ETH_Stop(&heth);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -506,30 +466,34 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 void TransmitPacket(ETH_HandleTypeDef *heth) {
+    const uint16_t payload_len = TX_BUFFER_SIZE; // 512 bytes
 
+    // Clean the transmit buffer before use
+    memset(TxDataBuffer, 0, TX_BUFFER_SIZE);
+    memcpy(TxDataBuffer, adc_buffer, payload_len);
+
+    // Initialize TxBuffer
     ETH_BufferTypeDef TxBuffer;
-    ETH_TxPacketConfig TxConfig;
-
-    // Initialize TxConfig
-    memset(&TxConfig, 0, sizeof(ETH_TxPacketConfig));
-    TxConfig.Attributes = ETH_TX_PACKETS_FEATURES_CSUM | ETH_TX_PACKETS_FEATURES_CRCPAD;
-    TxConfig.ChecksumCtrl = ETH_CHECKSUM_IPHDR_PAYLOAD_INSERT_PHDR_CALC;
-    TxConfig.CRCPadCtrl = ETH_CRC_PAD_INSERT;
-    TxConfig.Length = sizeof(TxDataBuffer);
-    //TxConfig.Length =TX_BUFFER;
-    TxConfig.TxBuffer = &TxBuffer;
-
-    // Set up TxBuffer
+    memset(&TxBuffer, 0, sizeof(ETH_BufferTypeDef));
     TxBuffer.buffer = TxDataBuffer;
-    TxBuffer.len = sizeof(TxDataBuffer);
+    TxBuffer.len = payload_len;
     TxBuffer.next = NULL;
 
+    // Initialize TxConfig
+    ETH_TxPacketConfig TxConfig;
+    memset(&TxConfig, 0, sizeof(ETH_TxPacketConfig));
+    TxConfig.Attributes    = ETH_TX_PACKETS_FEATURES_CSUM | ETH_TX_PACKETS_FEATURES_CRCPAD;
+    TxConfig.ChecksumCtrl  = ETH_CHECKSUM_IPHDR_PAYLOAD_INSERT_PHDR_CALC;
+    TxConfig.CRCPadCtrl    = ETH_CRC_PAD_INSERT;
+    TxConfig.Length        = payload_len;    // Match exactly
+    TxConfig.TxBuffer      = &TxBuffer;
+
+    // Transmit
     if (HAL_ETH_Transmit(heth, &TxConfig, HAL_MAX_DELAY) != HAL_OK) {
-        // Transmission Error
+        printf("❌ Packet transmission failed (len=%d)\n", payload_len);
         Error_Handler();
     } else {
-        // Successful transmission
-        printf("Packet transmitted successfully\n");
+        printf("✅ Packet transmitted (%d bytes)\n", payload_len);
     }
 }
 
@@ -538,6 +502,7 @@ int _write(int file, char *ptr, int len) {
     return len;
 }
 void ReadChunk(ETH_HandleTypeDef *heth, uint8_t *RxDataBuffer) {
+#if 0
     size_t line_length = 16;  // Number of bytes to display per line
     size_t i;
 
@@ -562,10 +527,76 @@ void ReadChunk(ETH_HandleTypeDef *heth, uint8_t *RxDataBuffer) {
         }
         printf("\r\n\r\n");  // Double new line to separate different chunks
     }
+#endif
 }
+void TransmitRawVoltage()
+{
+	int float_cnt = 0;
+	int byte_cnt = 0;
+	if (HAL_ETH_Start(&heth) != HAL_OK)
+		  {
+			  printf("Failed to start Ethernet\r\n");
+			  Error_Handler();
+		  } else {
+			  printf("Ethernet started\r\n");
+		  }
+	 uint8_t *RxDataBuffer = NULL;
+	 if (HAL_ETH_ReadData(&heth, (void*)&RxDataBuffer)) {
 
+		  ReadChunk(&heth, RxDataBuffer);
+	 }
+	 for (int i = 0; i < TOTAL_FLOATS; i++) {
+		HAL_ADC_Start(&hadc3);
+		if (HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY) == HAL_OK) {
+			uint16_t raw = HAL_ADC_GetValue(&hadc3);
+			adc_buffer[i] = ((float)raw * 3.3f) / 4095.0f;
+			float_cnt++;
+			printf("%f ", adc_buffer[i]);
+		}
+		HAL_ADC_Stop(&hadc3);
+	 }
+	 printf("\n\r the end of floats, now TxDataBuffer");
+	 memset(TxDataBuffer, 0, TX_BUFFER_SIZE);
+	 const float *src_ptr = adc_buffer; // Pointer to the source float array
+	 uint8_t *dest_ptr = TxDataBuffer;
 
+	 // Convert floats in adc_buffer to bytes and store in TxDataBuffer
+	 for (int i = 0; i < TOTAL_FLOATS; i++) {
+		 // Each float (4 bytes) is copied to the appropriate position in TxDataBuffer
+		  memcpy(dest_ptr, src_ptr, sizeof(float));
+		  // Move the pointers to the next position
+		  src_ptr++;
+		  dest_ptr += sizeof(float);
+		  byte_cnt += sizeof(float);
+	 }
+	 printf("Total floats obtained by ADC: %d, Total bytes written to TxDataBuffer: %d", float_cnt, byte_cnt);
+	 for (int i = 0; i < TOTAL_FLOATS; i += 4) {
+		 printf("TxDataBuffer [%d - %d]: %02x %02x %02x %02x\r\n", i, i+3,
+				TxDataBuffer[i], TxDataBuffer[i+1], TxDataBuffer[i+2], TxDataBuffer[i+3]);
 
+	 }
+	 TransmitPacket(&heth);
+
+	 HAL_ETH_Stop(&heth);
+	 printf("Total floats obtained by ADC: %d, Total bytes written to TxDataBuffer: %d", float_cnt, byte_cnt);
+
+}
+#if 0
+void GetRawVoltage() {
+    for (int i = 0; i < TOTAL_FLOATS; i++) {
+        HAL_ADC_Start(&hadc3);
+        if (HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY) == HAL_OK) {
+            uint16_t raw = HAL_ADC_GetValue(&hadc3);
+            float voltage = ((float)raw * 3.3f) / 4095.0f;  // Convert to actual voltage
+            printf("%0.5f ", voltage);
+        } else {
+            printf("0.00000 ");  // fallback if conversion fails
+        }
+        HAL_ADC_Stop(&hadc3);
+    }
+    printf("\r\n");
+}
+#endif
 /* USER CODE END 4 */
 
 /**

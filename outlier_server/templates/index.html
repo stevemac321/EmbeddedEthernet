@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EKG Predictions Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        h1 { color: #3071a9; }
+        .results {
+            max-height: 800px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 1em;
+            background: #fafafa;
+}
+        .entry {
+            border-bottom: 1px solid #e6e6e6;
+            margin-bottom: 1em;
+            padding-bottom: 1em;
+        }
+        .anomaly-true { color: red; font-weight: bold; }
+        .anomaly-false { color: green; }
+        .timestamp { font-size: 0.95em; color: #888; }
+    </style>
+</head>
+<body>
+    <h1>EKG Predictions Dashboard</h1>
+    <div class="results">
+        {% for item in results %}
+        <div class="entry">
+            <div class="timestamp">{{ item.timestamp }}</div>
+            <div><strong>Prediction:</strong> [{{ item.output[:5]|join(', ') }} ...]</div>
+            <div><strong>Error:</strong> {{ item.error }}</div>
+            <div>
+                <strong>Anomaly:</strong>
+                <span class="anomaly-{{ item.anomaly|lower }}">{{ item.anomaly }}</span>
+            </div>
+        </div>
+        {% else %}
+        <div>No predictions received yet.</div>
+        {% endfor %}
+    </div>
+</body>
+</html>
